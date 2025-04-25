@@ -6,38 +6,62 @@
 import torch
 from transformers import BertModel, BertTokenizer
 from transformers import T5ForConditionalGeneration, T5Tokenizer
+from transformers.modeling_outputs import BaseModelOutput
+from torch import nn
 
 class FusionQAModel:
     def __init__(self, device='cuda'):
         self.device = device
+
+        print('🔄 Downloading BERT...')
         self.bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
         self.bert_model = BertModel.from_pretrained("bert-base-uncased").to(device)
+        print('✅ BERT loaded.')
 
-        self.t5_tokenizer = T5Tokenizer.from_pretrained("t5-small")
-        self.t5_model = T5ForConditionalGeneration.from_pretrained("t5-small").to(device)
+        print('🔄 Loading T5...')
+        self.t5_tokenizer = T5Tokenizer.from_pretrained("./t5-small")
+        self.t5_model = T5ForConditionalGeneration.from_pretrained("./t5-small").to(device)
+        print('✅ T5 loaded.')
+
+        # 添加 BERT → T5 的线性映射
+        self.projection = nn.Linear(768, 512).to(device)  # BERT输出768 → T5期望512
 
     def encode_passages(self, question, passages):
         """分别将每段passage与question编码，并返回embedding序列"""
         all_embeddings = []
         for passage in passages:
             text = f"[CLS] {question} [SEP] {passage} [SEP]"
-            inputs = self.bert_tokenizer(text, return_tensors="pt", truncation=True, max_length=384).to(self.device)
+            inputs = self.bert_tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=384,
+                padding='max_length'
+            ).to(self.device)
             outputs = self.bert_model(**inputs)
-            all_embeddings.append(outputs.last_hidden_state)
+            # bert_hidden = outputs.last_hidden_state  # (1, seq_len, 768)
+            # projected = self.projection(bert_hidden)  # (1, seq_len, 512)
+            all_embeddings.append(self.projection(outputs.last_hidden_state))  # shape: (1, seq_len, hidden_size)
         return all_embeddings
 
     def generate_answer(self, question, passages):
         with torch.no_grad():
+            # 编码所有段落
             encodings = self.encode_passages(question, passages)
-            # 将多个段落编码拼接为 decoder 输入
-            stacked = torch.cat(encodings, dim=1)  # shape: (1, total_len, hidden_size)
 
-            # 为 decoder 构造 dummy input（prompt）
-            t5_input = self.t5_tokenizer("answer:", return_tensors="pt").input_ids.to(self.device)
+            # 限制拼接总长度，避免爆显存
+            stacked = torch.cat(encodings, dim=1)  # shape: (1, total_len, hidden_size)
+            if stacked.size(1) > 512:
+                print("⚠️ Total token length too long, truncating to 512 tokens.")
+                stacked = stacked[:, :512, :]
+
+            encoder_outputs = BaseModelOutput(last_hidden_state=stacked)
+
+            decoder_input = self.t5_tokenizer("answer:", return_tensors="pt").input_ids.to(self.device)
 
             output = self.t5_model.generate(
-                encoder_outputs=(stacked,),
-                decoder_input_ids=t5_input,
+                encoder_outputs=encoder_outputs,
+                decoder_input_ids=decoder_input,
                 max_length=64,
                 num_beams=4,
                 early_stopping=True
