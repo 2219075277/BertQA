@@ -14,8 +14,8 @@ class FusionQAModel:
         self.device = device
 
         print('🔄 Downloading BERT...')
-        self.bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-        self.bert_model = BertModel.from_pretrained("bert-base-uncased").to(device)
+        self.bert_tokenizer = BertTokenizer.from_pretrained("./bert-base-uncased")
+        self.bert_model = BertModel.from_pretrained("./bert-base-uncased").to(device)
         print('✅ BERT loaded.')
 
         print('🔄 Loading T5...')
