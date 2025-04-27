@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QA Demo</title>
+</head>
+<body>
+
+    <h1>问答系统</h1>
+    <label for="question">问题:</label>
+    <input type="text" id="question" placeholder="输入问题" />
+    <br>
+    <label for="passages">上下文:</label>
+    <textarea id="passages" rows="4" cols="50" placeholder="输入上下文"></textarea>
+    <br>
+    <button onclick="getAnswer()">获取答案</button>
+
+    <h2>答案:</h2>
+    <p id="answer"></p>
+
+    <script>
+        async function getAnswer() {
+            const question = document.getElementById('question').value;
+            const passages = document.getElementById('passages').value.split('\n');
+
+            const response = await fetch('http://127.0.0.1:8000/qa', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    question: question,
+                    passages: passages
+                })
+            });
+
+            const data = await response.json();
+            document.getElementById('answer').textContent = data.answer;
+        }
+    </script>
+
+</body>
+</html>
