@@ -3,3 +3,5 @@ torch
 accelerate
 datasets
 tqdm
+fastapi
+uvicorn

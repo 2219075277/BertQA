@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from models.fusion_model import FusionQAModel
 from fastapi.middleware.cors import CORSMiddleware
+import torch
 app = FastAPI()
 
 # 允许跨域
@@ -16,16 +17,16 @@ app.add_middleware(
     allow_methods=["*"],  # 允许所有方法，包括OPTIONS
     allow_headers=["*"],  # 允许所有请求头
 )
-qa_model = FusionQAModel()
-# qa_model.load_pretrained('你的模型路径')    # 预训练权重
-
+model = FusionQAModel(device='cuda')
+# model.load_state_dict(torch.load("saved_model/best.pth"))     # 加载权重
+model.eval()
 class QuestionRequest(BaseModel):
     question: str
     passages: list
 
 @app.post("/qa")
 def generate_answer(request: QuestionRequest):
-    answer = qa_model.generate_answer(request.question, request.passages)
+    answer = model.generate_answer(request.question, request.passages)
     return {"answer": answer}
 
 if __name__ == "__main__":
