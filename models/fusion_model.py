@@ -23,6 +23,8 @@ class FusionQAModel(nn.Module):
         self.bert_tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext")
         self.bert_model = BertModel.from_pretrained("hfl/chinese-bert-wwm-ext").to(device)
 
+
+
         # T5 tokenizer 和模型
         self.t5_tokenizer = BertTokenizer.from_pretrained("uer/t5-small-chinese-cluecorpussmall")
         self.t5_model = T5ForConditionalGeneration.from_pretrained("uer/t5-small-chinese-cluecorpussmall").to(device)
