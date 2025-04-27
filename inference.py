@@ -8,11 +8,11 @@ from models.fusion_model import FusionQAModel
 
 qa_model = FusionQAModel()
 
-question = "What is the capital of France?"
+question = "法国的首都是什么？"
 passages = [
-    "France is a country in Europe. It has a population of over 60 million.",
-    "Paris is the capital and largest city of France.",
-    "The Eiffel Tower is located in the capital city.",
+"法国是欧洲的一个国家。它有超过 6000 万人口。",
+"巴黎是法国的首都，也是法国最大的城市。",
+"埃菲尔铁塔位于这座首都城市。"
 ]
 
 answer = qa_model.generate_answer(question, passages)

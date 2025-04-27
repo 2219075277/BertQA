@@ -8,23 +8,28 @@ from transformers import BertModel, BertTokenizer
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 from transformers.modeling_outputs import BaseModelOutput
 from torch import nn
-
+from models.joint import Joint
+# 设置镜像源
+import os
+import os
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1" # 忽略警告
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.tuna.tsinghua.edu.cn'
 class FusionQAModel:
     def __init__(self, device='cuda'):
         self.device = device
 
         print('🔄 Downloading BERT...')
-        self.bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-        self.bert_model = BertModel.from_pretrained("bert-base-uncased").to(device)
+        self.bert_tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext") # 	哈工大版，Whole Word Masking，理解力更强一点
+        self.bert_model = BertModel.from_pretrained("hfl/chinese-bert-wwm-ext").to(device)
         print('✅ BERT loaded.')
 
         print('🔄 Loading T5...')
-        self.t5_tokenizer = T5Tokenizer.from_pretrained("./t5-small")
-        self.t5_model = T5ForConditionalGeneration.from_pretrained("./t5-small").to(device)
+        self.t5_tokenizer = BertTokenizer.from_pretrained(r"uer/t5-small-chinese-cluecorpussmall")
+        self.t5_model = T5ForConditionalGeneration.from_pretrained(r"uer/t5-small-chinese-cluecorpussmall").to(device)
         print('✅ T5 loaded.')
 
         # 添加 BERT → T5 的线性映射
-        self.projection = nn.Linear(768, 512).to(device)  # BERT输出768 → T5期望512
+        self.projection = Joint(in_channels=768, out_channels=512, hidden_channels=568)  # BERT输出768 → T5期望512
 
     def encode_passages(self, question, passages):
         """分别将每段passage与question编码，并返回embedding序列"""
