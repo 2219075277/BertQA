@@ -1,58 +1,111 @@
-"""
-训练窗口
-"""
-
-import torch
-from torch.utils.data import DataLoader
-from transformers import BertTokenizer, T5ForConditionalGeneration, AdamW, get_linear_schedule_with_warmup
 from datasets import load_dataset
+from torch.utils.data import DataLoader
+from transformers import AdamW, get_linear_schedule_with_warmup, BertTokenizerFast
 from tqdm import tqdm
+import torch
+from transformers import BertTokenizer
+
+from api.app import qa_model
 from models.fusion_model import FusionQAModel
+import warnings
+import logging
 
-# 设置训练数据集
-def train(model, dataset, batch_size=16, num_epochs=3, lr=1e-5, save_dir="saved_model"):
-    # 定义数据加载器
-    train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+warnings.filterwarnings("ignore", category=UserWarning)
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
-    # 设置优化器和学习率调度器
-    optimizer = AdamW(model.parameters(), lr=lr)
-    total_steps = len(train_dataloader) * num_epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+# 加载 BERT tokenizer
+bert_tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext")
+t5_tokenizer  = bert_tokenizer
+# ------------------ 预处理 ------------------
+
+def preprocess_dataset(raw_dataset, bert_tokenizer, t5_tokenizer):
+    examples = []
+    for item in raw_dataset["data"]:
+        for para in item["paragraphs"]:
+            context = para["context"]
+            for qa in para["qas"]:
+                question = qa["question"]
+                # 取第一个答案
+                answer_text = qa["answers"][0]["text"]
+
+                # 编码 question + context
+                enc = bert_tokenizer(
+                    question,
+                    context,
+                    padding="max_length",
+                    truncation="only_second",
+                    max_length=512,
+                )
+                # 编码 answer 作为 labels
+                ans = t5_tokenizer(
+                    answer_text,
+                    padding="max_length",
+                    truncation=True,
+                    max_length=64,
+                )
+
+                examples.append({
+                    "input_ids":     torch.tensor(enc["input_ids"],     dtype=torch.long),
+                    "attention_mask":torch.tensor(enc["attention_mask"],dtype=torch.long),
+                    "labels":        torch.tensor(ans["input_ids"],     dtype=torch.long),
+                })
+    return examples
+
+
+
+# ------------------ collate_fn ------------------
+
+def collate_fn(batch):
+    input_ids      = torch.stack([x["input_ids"]      for x in batch])
+    attention_mask = torch.stack([x["attention_mask"] for x in batch])
+    labels         = torch.stack([x["labels"]         for x in batch])
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
+    }
+
+
+
+# ------------------ train函数 ------------------
+
+def train(model, dataset, batch_size=8, num_epochs=3, lr=1e-5):
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    optim = AdamW(model.parameters(), lr=lr)
+    total_steps = len(dataloader) * num_epochs
+    sched = get_linear_schedule_with_warmup(optim, num_warmup_steps=0, num_training_steps=total_steps)
+    min_loss = float("inf")
 
     model.train()
-    min_loss = float("inf")
-    for epoch in tqdm(range(num_epochs)):
-        print(f"Epoch {epoch + 1}/{num_epochs}")
-        for batch in train_dataloader:
-            input_ids = batch['input_ids'].to(model.device)
-            attention_mask = batch['attention_mask'].to(model.device)
-            labels = batch['labels'].to(model.device)
-
-            # 前向传播
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+    for epoch in range(num_epochs):
+        print(f"Epoch {epoch+1}/{num_epochs}")
+        for batch in tqdm(dataloader):
+            for k,v in batch.items():
+                batch[k] = v.to(model.device)
+            outputs = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=batch["labels"]
+            )
             loss = outputs.loss
-
-            # 反向传播与优化
-            optimizer.zero_grad()
+            optim.zero_grad()
             loss.backward()
-            optimizer.step()
-            scheduler.step()
+            optim.step()
+            sched.step()
+            if loss.item() < min_loss:
+                min_loss = loss.item()
+                torch.save(model.state_dict(), "saved_model/best.pth")
 
-            print(f"Loss: {loss.item()}")
+        print(f"  Loss: {loss.item():.4f}")
 
-        # 每个epoch结束后保存模型权重
-        if loss.item() < min_loss:
-            min_loss = loss.item()
 
-            model.save_pretrained(save_dir)
-            print(f"模型已保存到 {save_dir} 目录。")
 
-# 加载中文SQuAD数据集（你可以使用其他中文数据集）
-dataset = load_dataset("squad_zh")['train']  # 示例使用中文SQuAD数据集
+# ------------------ 主流程 ------------------
 
-# 创建模型并训练
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-qa_model = FusionQAModel(device=device)
+if __name__ == "__main__":
+    raw = load_dataset("json", data_files="./data/cmrc2018_train.json", split="train")
+    dataset = preprocess_dataset(raw, bert_tokenizer, t5_tokenizer)
 
-# 开始训练
-train(qa_model, dataset, save_dir="saved_model")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    qa_model = FusionQAModel(device=device)
+    train(qa_model, dataset)

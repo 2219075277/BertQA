@@ -1,77 +1,96 @@
 # models/fusion_model.py
 """
-# BERT 编码器 + T5 解码器
-
+BERT 编码器 + T5 解码器
 """
 import torch
+import os
+from torch import nn
 from transformers import BertModel, BertTokenizer
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 from transformers.modeling_outputs import BaseModelOutput
-from torch import nn
 from models.joint import Joint
+
 # 设置镜像源
-import os
-import os
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1" # 忽略警告
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.tuna.tsinghua.edu.cn'
-class FusionQAModel:
+
+class FusionQAModel(nn.Module):
     def __init__(self, device='cuda'):
+        super().__init__()
         self.device = device
 
-        print('🔄 Downloading BERT...')
-
-        self.bert_tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext") # 	哈工大版，Whole Word Masking，理解力更强一点
+        # BERT tokenizer 和模型
+        self.bert_tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext")
         self.bert_model = BertModel.from_pretrained("hfl/chinese-bert-wwm-ext").to(device)
 
-        print('✅ BERT loaded.')
 
-        print('🔄 Loading T5...')
-        self.t5_tokenizer = BertTokenizer.from_pretrained(r"uer/t5-small-chinese-cluecorpussmall")
-        self.t5_model = T5ForConditionalGeneration.from_pretrained(r"uer/t5-small-chinese-cluecorpussmall").to(device)
-        print('✅ T5 loaded.')
 
-        # 添加 BERT → T5 的线性映射
-        self.projection = Joint(in_channels=768, out_channels=512, hidden_channels=568)  # BERT输出768 → T5期望512
+        # T5 tokenizer 和模型
+        self.t5_tokenizer = BertTokenizer.from_pretrained("uer/t5-small-chinese-cluecorpussmall")
+        self.t5_model = T5ForConditionalGeneration.from_pretrained("uer/t5-small-chinese-cluecorpussmall").to(device)
 
-    def encode_passages(self, question, passages):
-        """分别将每段passage与question编码，并返回embedding序列"""
-        all_embeddings = []
-        for passage in passages:
-            text = f"[CLS] {question} [SEP] {passage} [SEP]"
-            inputs = self.bert_tokenizer(
-                text,
-                return_tensors="pt",
-                truncation=True,
-                max_length=384,
-                padding='max_length'
-            ).to(self.device)
-            outputs = self.bert_model(**inputs)
-            # bert_hidden = outputs.last_hidden_state  # (1, seq_len, 768)
-            # projected = self.projection(bert_hidden)  # (1, seq_len, 512)
-            all_embeddings.append(self.projection(outputs.last_hidden_state))  # shape: (1, seq_len, hidden_size)
-        return all_embeddings
+        # BERT到T5的映射（如果需要的话）
+        self.projection = Joint(768, 512).to(device)
 
-    def generate_answer(self, question, passages):
+    def forward(self, input_ids, attention_mask, token_type_ids=None, labels=None):
+        # 使用 BERT 提取特征
+        encoder_outputs = self.bert_model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids
+        )
+        bert_hidden_states = encoder_outputs.last_hidden_state
+
+        # 如果需要映射到 T5 的隐藏层大小
+        projected_hidden_states = self.projection(bert_hidden_states)
+        encoder_outputs = BaseModelOutput(last_hidden_state=projected_hidden_states)
+
+        # 使用 T5 的 decoder 来生成答案
+        outputs = self.t5_model(
+            input_ids=input_ids,  # BERT 编码后的 input_ids
+            attention_mask=attention_mask,
+            decoder_input_ids=None,  # Decoder 输入在这种生成任务下可能为空
+            encoder_outputs=encoder_outputs,  # 提供给 T5 编码器的输入
+            labels=labels  # 如果是训练的话，传入 labels，生成任务的目标答案
+        )
+
+        return outputs
+
+    def generate_answer(self, question, passages, max_length=64, num_beams=4):
+        """推理：给定问题和多个段落，生成答案文本"""
+        self.eval()
         with torch.no_grad():
-            # 编码所有段落
-            encodings = self.encode_passages(question, passages)
+            all_embeddings = []
+            for passage in passages:
+                enc = self.bert_tokenizer(
+                    question,
+                    passage,
+                    padding="max_length",
+                    truncation="only_second",
+                    max_length=512,
+                    return_tensors="pt"
+                )
+                enc = {k: v.to(self.device) for k, v in enc.items()}
+                bert_out = self.bert_model(
+                    input_ids=enc["input_ids"],
+                    attention_mask=enc["attention_mask"],
+                    token_type_ids=enc.get("token_type_ids", None)
+                )
+                proj = self.projection(bert_out.last_hidden_state)
+                all_embeddings.append(proj)
 
-            # 限制拼接总长度，避免爆显存
-            stacked = torch.cat(encodings, dim=1)  # shape: (1, total_len, hidden_size)
-            if stacked.size(1) > 512:
-                print("⚠️ Total token length too long, truncating to 512 tokens.")
-                stacked = stacked[:, :512, :]
+            # 拼接
+            encoder_hidden = torch.cat(all_embeddings, dim=1)
+            if encoder_hidden.size(1) > 512:
+                encoder_hidden = encoder_hidden[:, :512, :]
 
-            encoder_outputs = BaseModelOutput(last_hidden_state=stacked)
+            encoder_outputs = BaseModelOutput(last_hidden_state=encoder_hidden)
 
-            decoder_input = self.t5_tokenizer("answer:", return_tensors="pt").input_ids.to(self.device)
-
-            output = self.t5_model.generate(
+            generated_ids = self.t5_model.generate(
                 encoder_outputs=encoder_outputs,
-                decoder_input_ids=decoder_input,
-                max_length=64,
-                num_beams=4,
+                decoder_start_token_id=self.t5_tokenizer.cls_token_id,
+                max_length=max_length,
+                num_beams=num_beams,
                 early_stopping=True
             )
-
-            return self.t5_tokenizer.decode(output[0], skip_special_tokens=True)
+            return self.t5_tokenizer.decode(generated_ids[0], skip_special_tokens=True)

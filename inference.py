@@ -3,17 +3,28 @@
 
 """
 # inference.py
-import json
+import warnings
+# 忽略 flash attention 相关的 UserWarning
+warnings.filterwarnings(
+    "ignore",
+    message=".*flash attention.*",
+    category=UserWarning,
+)
+import logging
+logging.getLogger("transformers.modeling_bert").setLevel(logging.ERROR)
+
 from models.fusion_model import FusionQAModel
+import torch
 
-qa_model = FusionQAModel()
+question = "你叫什么名字?"
+passages = ["这是一个关于人的问题。", "回答这个问题非常简单。"]
 
-question = "法国的首都是什么？"
-passages = [
-"法国是欧洲的一个国家。它有超过 6000 万人口。",
-"巴黎是法国的首都，也是法国最大的城市。",
-"埃菲尔铁塔位于这座首都城市。"
-]
-
-answer = qa_model.generate_answer(question, passages)
-print(f"Q: {question}\nA: {answer}")
+model = FusionQAModel(device='cuda')
+# model.load_state_dict(torch.load("saved_model/best.pth"))
+model.eval()
+# … 先加载/训练模型权重 …
+answer = model.generate_answer(
+    question=question, passages=passages,max_length=64
+)
+print('问题：',question)
+print("生成的答案：", answer)

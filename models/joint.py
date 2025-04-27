@@ -15,7 +15,6 @@ class Joint(nn.Module):
         self.attn = nn.Sequential(Block(in_channels=hidden_channels, out_channels=out_channels),
                                   nn.ReLU(),
                                   )
-        self.to(device)  # 让整个模块迁移到device上
 
     def forward(self, x):
         x = x.to(self.device)
