@@ -19,8 +19,10 @@ class FusionQAModel:
         self.device = device
 
         print('🔄 Downloading BERT...')
+
         self.bert_tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext") # 	哈工大版，Whole Word Masking，理解力更强一点
         self.bert_model = BertModel.from_pretrained("hfl/chinese-bert-wwm-ext").to(device)
+
         print('✅ BERT loaded.')
 
         print('🔄 Loading T5...')

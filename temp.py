@@ -27,6 +27,7 @@ for model_name, files in models.items():
     local_dir = model_name.replace("/", "-")
     os.makedirs(local_dir, exist_ok=True)
 
+
     # 构建模型的镜像源 URL
     mirror_url = mirror_url_base + model_name + "/resolve/main/"
 
@@ -46,3 +47,5 @@ for model_name, files in models.items():
             print(f"{model_name} 的 {file} 下载完成。")
         except requests.RequestException as e:
             print(f"下载 {model_name} 的 {file} 时出错: {e}")
+
+
