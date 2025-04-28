@@ -20,7 +20,7 @@ question = "你叫什么名字?"
 passages = ["这是一个关于人的问题。", "回答这个问题非常简单。"]
 
 model = FusionQAModel(device='cuda')
-# model.load_state_dict(torch.load("saved_model/best.pth"))
+model.load_state_dict(torch.load(r"E:\PYcharmProject\自然语言处理\BertQA\saved_model\best.pth", weights_only=True))
 model.eval()
 # … 先加载/训练模型权重 …
 answer = model.generate_answer(

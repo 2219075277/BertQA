@@ -6,6 +6,7 @@ models = {
     "hfl/chinese-bert-wwm-ext": [
         "config.json",
         "pytorch_model.bin",
+        "tokenizer.json",
         "vocab.txt",
         "tokenizer_config.json"
     ],
@@ -15,7 +16,8 @@ models = {
         "tokenizer.json",
         "tokenizer_config.json",
         "special_tokens_map.json",
-        "spiece.model"
+        "spiece.model",
+        "vocab.txt",
     ]
 }
 
