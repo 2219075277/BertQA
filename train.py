@@ -1,20 +1,20 @@
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-from transformers import AdamW, get_linear_schedule_with_warmup, BertTokenizerFast
+from transformers import get_linear_schedule_with_warmup, BertTokenizerFast
+from torch.optim import AdamW
 from tqdm import tqdm
 import torch
 from transformers import BertTokenizer
 
-from api.app import qa_model
 from models.fusion_model import FusionQAModel
 import warnings
 import logging
-
+from utils.logger import save_answer
 warnings.filterwarnings("ignore", category=UserWarning)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
 # 加载 BERT tokenizer
-bert_tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext")
+bert_tokenizer = BertTokenizer.from_pretrained("./hfl-chinese-bert-wwm-ext")
 t5_tokenizer  = bert_tokenizer
 # ------------------ 预处理 ------------------
 
@@ -69,7 +69,7 @@ def collate_fn(batch):
 
 # ------------------ train函数 ------------------
 
-def train(model, dataset, batch_size=8, num_epochs=3, lr=1e-5):
+def train(model, dataset, batch_size=8, num_epochs=50, lr=1e-5):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     optim = AdamW(model.parameters(), lr=lr)
     total_steps = len(dataloader) * num_epochs
@@ -79,7 +79,7 @@ def train(model, dataset, batch_size=8, num_epochs=3, lr=1e-5):
     model.train()
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
-        for batch in tqdm(dataloader):
+        for i, batch in tqdm(enumerate(dataloader)):
             for k,v in batch.items():
                 batch[k] = v.to(model.device)
             outputs = model(
@@ -92,10 +92,18 @@ def train(model, dataset, batch_size=8, num_epochs=3, lr=1e-5):
             loss.backward()
             optim.step()
             sched.step()
-            if loss.item() < min_loss:
-                min_loss = loss.item()
-                torch.save(model.state_dict(), "saved_model/best.pth")
+            if i % 100 == 0:
+                print(f"loss:{loss}")
+                question = "你是谁"
+                passages = ["这是一个关于人的问题。", "回答这个问题非常简单。"]
+                answer = model.generate_answer(
+                    question=question, passages=passages, max_length=64
+                )
+                save_answer(question, answer, epoch, i)
 
+        if loss.item() < min_loss:
+            min_loss = loss.item()
+            torch.save(model.state_dict(), "saved_model/best.pth")
         print(f"  Loss: {loss.item():.4f}")
 
 
